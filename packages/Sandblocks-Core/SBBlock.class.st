@@ -374,7 +374,8 @@ SBBlock >> click: anEvent [
 	(anEvent redButtonPressed and: [anEvent shiftPressed]) ifTrue: [^ self startOrAddToMultiSelection].
 	
 	self sandblockEditor selectClick: self at: anEvent position.
-	(anEvent yellowButtonPressed and: [SBPreferences rightClickContextMenu]) ifTrue: [self promptAction]
+	(anEvent yellowButtonPressed and: [SBPreferences rightClickContextMenu]) ifTrue: [self promptAction].
+	(self suggestAlways and: [anEvent redButtonPressed]) ifTrue: [self toggleSuggestions].
 ]
 
 { #category : #hierarchy }
@@ -421,16 +422,24 @@ SBBlock >> completeSubtree [
 { #category : #suggestions }
 SBBlock >> completionSuggestionsFor: aString [
 
-	^ aString size > 2
+	^ (self suggestAlways or: [aString size > 2])
 		ifTrue: [ | baseClass |
 			baseClass := self guessClassExpensive.
 			baseClass isNil
-				ifFalse: [
-					Array streamContents: [:stream |
+				ifFalse: [ | allMatches fuzzyMatches exactMatches |
+					exactMatches := Array streamContents: [:stream |
 						baseClass withAllSuperclassesDo: [:class |
-							class methodsDo: [:m | | sel |
-								sel := m selector asString.
-								(sel sandblockMatch: aString) ifTrue: [stream nextPut: sel]]]]]
+							class selectors sorted do: [:sel |
+								(sel asString sandblockBeginsWith: aString) ifTrue: [stream nextPut: sel asString]]]].
+					fuzzyMatches := Array streamContents: [:stream |
+						baseClass withAllSuperclassesDo: [:class |
+							class selectors sorted do: [:sel |
+								(sel asString sandblockMatch: aString) ifTrue: [stream nextPut: sel asString]]]].
+					allMatches := Array streamContents: [:stream |
+						baseClass withAllSuperclassesDo: [:class |
+							class selectors sorted do: [:sel |
+								stream nextPut: sel asString]]].
+					(exactMatches, fuzzyMatches, allMatches) withoutDuplicates]
 				ifTrue: [Symbol allSymbols select: [:sym | sym asString sandblockMatch: aString]]]
 		ifFalse: [#()]
 ]
@@ -2516,6 +2525,12 @@ SBBlock >> submorphIndex [
 	^ self owner submorphs indexOf: self
 ]
 
+{ #category : #accessing }
+SBBlock >> suggestAlways [
+
+	^ self sandblockEditor suggestAlways
+]
+
 { #category : #suggestions }
 SBBlock >> suggestionMenuDo: aBlock [
 
@@ -2594,6 +2609,14 @@ SBBlock >> toggleDecorator: aDecorator [
 		ifNone: [self attachDecorator: aDecorator]
 ]
 
+{ #category : #suggestions }
+SBBlock >> toggleSuggestions [
+
+	self suggestionsMenu isInWorld
+		ifTrue: [self removeSuggestionMenu]
+		ifFalse: [(self respondsTo: #updateSuggestions) ifTrue: [self updateSuggestions]].
+]
+
 { #category : #'ast helpers' }
 SBBlock >> tryFixIfFail: aBlock [
 
@@ -2626,7 +2649,7 @@ SBBlock >> updateSuggestions: aCollection showNear: aMorph [
 	
 	self suggestionsMenu
 		editor: self sandblockEditor;
-		suggestions: ((aCollection sort: [:a :b | a selector size < b selector size]) first: (20 min: aCollection size));
+		suggestions: (aCollection take: 1000);
 		topLeft: aMorph positionInWorld + (0 @ aMorph height);
 		openInWorld;
 		resize
